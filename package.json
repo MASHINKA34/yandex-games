@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "engines": {
-    "node": ">=20.19"
+    "node": "^22.12.0 || ^24.0.0 || >=26.0.0"
   },
   "workspaces": [
     "packages/*",
@@ -11,8 +11,8 @@
     "tools"
   ],
   "scripts": {
-    "dev:anomaly": "vite --config games/anomaly/vite.config.ts",
-    "dev:flea": "vite --config games/flea/vite.config.ts",
+    "dev:anomaly": "node tools/dev.mjs anomaly",
+    "dev:flea": "node tools/dev.mjs flea",
     "proxy:anomaly": "node tools/proxy.mjs anomaly",
     "proxy:flea": "node tools/proxy.mjs flea",
     "build:anomaly": "vite build --config games/anomaly/vite.config.ts",
@@ -36,6 +36,7 @@
     "adm-zip": "^0.6.1",
     "eslint": "^9.39.5",
     "globals": "^17.13.0",
+    "happy-dom": "^21.0.1",
     "typescript": "~5.9.3",
     "typescript-eslint": "^8.71.2",
     "vite": "~7.3.7",

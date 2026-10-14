@@ -12,6 +12,7 @@ export default defineConfig({
   },
   test: {
     include: ['packages/*/src/**/*.test.ts', 'packages/*/mock/**/*.test.ts'],
+    environment: 'happy-dom',
     passWithNoTests: true,
   },
 });

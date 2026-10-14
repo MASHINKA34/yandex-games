@@ -2,7 +2,7 @@
 
 Две игры для Яндекс Игр на Phaser 3 и TypeScript: «Аномалия: Ночная смена» (`games/anomaly`) и «Барахолка: Торг уместен» (`games/flea`). Общий код в `packages/`, сборка и проверки в `tools/`.
 
-Нужен Node 20 или новее.
+Нужен Node 22.12+, 24 или 26+.
 
     npm install
     npx playwright install chromium

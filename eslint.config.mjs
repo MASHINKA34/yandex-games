@@ -26,7 +26,13 @@ export default defineConfig(
     files: ['**/*.ts'],
     languageOptions: {
       parserOptions: {
-        projectService: true,
+        project: [
+          './tsconfig.json',
+          './tools/tsconfig.json',
+          './packages/*/tsconfig.json',
+          './games/*/tsconfig.json',
+          './games/*/tsconfig.node.json',
+        ],
         tsconfigRootDir: import.meta.dirname,
       },
     },
@@ -48,7 +54,7 @@ export default defineConfig(
     rules: { 'no-console': 'off' },
   },
   {
-    files: ['packages/core/src/log.ts'],
+    files: ['packages/core/src/log.ts', 'games/*/src/log.ts'],
     rules: { 'no-console': 'off' },
   },
 );
