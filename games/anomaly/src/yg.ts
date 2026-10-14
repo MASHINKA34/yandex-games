@@ -1,4 +1,4 @@
-import type Phaser from 'phaser';
+import * as Phaser from 'phaser';
 import type { SDK } from 'ysdk';
 import { createLogger, since } from './log';
 
@@ -9,19 +9,26 @@ export interface AdResult {
   ms: number;
 }
 
+type PauseReason = 'sdk' | 'blur';
+type AdProgress = Omit<AdResult, 'ms'>;
+
 const log = createLogger('sdk');
 const AD_TIMEOUT_MS = 60_000;
+const AD_RESUME_GRACE_MS = 1_500;
 
 let sdk: SDK | null = null;
+let game: Phaser.Game | null = null;
 let initDoneAt = 0;
 let readySent = false;
 let gameplayActive = false;
-let pausedBySdk = false;
+let gameplaySent: 'start' | 'stop' | null = null;
+const pauseReasons = new Set<PauseReason>();
+let onSdkResume: (() => void) | null = null;
 
-export async function initSdk(): Promise<void> {
+export async function initSdk(): Promise<boolean> {
   if (typeof YaGames === 'undefined') {
     log.error('YaGames is not defined: /sdk.js did not load, continuing without SDK');
-    return;
+    return false;
   }
   const startedAt = performance.now();
   log.info('YaGames.init started');
@@ -29,16 +36,18 @@ export async function initSdk(): Promise<void> {
     sdk = await YaGames.init();
   } catch (error) {
     log.error('YaGames.init failed, continuing without SDK', { ms: since(startedAt), error });
-    return;
+    return false;
   }
   initDoneAt = performance.now();
   log.info('YaGames.init done', {
     ms: since(startedAt),
+    env: 'mock' in YaGames ? 'mock' : 'yandex',
     appId: sdk.environment.app.id,
     lang: sdk.environment.i18n.lang,
     device: sdk.deviceInfo.type,
     payload: sdk.environment.payload,
   });
+  return true;
 }
 
 export function sdkLang(): string {
@@ -52,31 +61,64 @@ function callGameplay(action: 'start' | 'stop', reason: string): void {
     log.warn(`GameplayAPI.${action} skipped: GameplayAPI is missing in this SDK`, { reason });
     return;
   }
+  if (gameplaySent === action) {
+    log.warn(`GameplayAPI.${action} skipped: already sent`, { reason });
+    return;
+  }
   api[action]();
+  gameplaySent = action;
   log.info(`GameplayAPI.${action}`, { reason });
 }
 
-export function bindGame(game: Phaser.Game): void {
+function pauseGame(reason: PauseReason): void {
+  if (pauseReasons.has(reason)) return;
+  if (reason === 'blur' && pauseReasons.has('sdk')) {
+    log.debug('window blur ignored: game is paused by SDK, focus moved to the ad or platform overlay');
+    return;
+  }
+  pauseReasons.add(reason);
+  if (pauseReasons.size > 1) {
+    log.info(`pause reason ${reason} added, game already paused`, { reasons: [...pauseReasons].join(',') });
+    return;
+  }
+  log.info(`game paused by ${reason}: sleeping loop, pausing sound`, { gameplayActive });
+  if (gameplayActive) callGameplay('stop', `pause:${reason}`);
+  game?.sound.pauseAll();
+  game?.loop.sleep();
+}
+
+function resumeGame(reason: PauseReason): void {
+  if (!pauseReasons.delete(reason)) return;
+  if (pauseReasons.size > 0) {
+    log.info(`pause reason ${reason} cleared, game stays paused`, { reasons: [...pauseReasons].join(',') });
+    return;
+  }
+  const resumeGameplay = gameplayActive;
+  log.info(`game resumed after ${reason}: waking loop, resuming sound`, { gameplayActive });
+  game?.loop.resetDelta();
+  game?.loop.wake();
+  game?.sound.resumeAll();
+  if (resumeGameplay) callGameplay('start', `resume:${reason}`);
+}
+
+export function bindGame(target: Phaser.Game): void {
+  game = target;
+  target.events.on(Phaser.Core.Events.BLUR, () => pauseGame('blur'));
+  target.events.on(Phaser.Core.Events.FOCUS, () => resumeGame('blur'));
   if (!sdk) {
-    log.warn('game_api_pause/resume not bound: SDK is not available');
+    log.warn('game_api_pause/resume not bound: SDK is not available, only window focus pauses the game');
     return;
   }
   sdk.on('game_api_pause', () => {
-    pausedBySdk = true;
-    log.info('game_api_pause: sleeping game loop, pausing sound', { gameplayActive });
-    if (gameplayActive) callGameplay('stop', 'game_api_pause');
-    game.sound.pauseAll();
-    game.loop.sleep();
+    log.info('game_api_pause received');
+    pauseGame('sdk');
   });
   sdk.on('game_api_resume', () => {
-    pausedBySdk = false;
-    game.loop.resetDelta();
-    game.loop.wake();
-    game.sound.resumeAll();
-    log.info('game_api_resume: game loop awake, sound resumed', { gameplayActive });
-    if (gameplayActive) callGameplay('start', 'game_api_resume');
+    log.info('game_api_resume received');
+    resumeGame('sdk');
+    onSdkResume?.();
   });
-  log.debug('subscribed to game_api_pause and game_api_resume');
+  log.debug('subscribed to game_api_pause, game_api_resume and window focus');
 }
 
 export function gameReady(): void {
@@ -104,8 +146,8 @@ export function gameplayStart(reason: string): void {
     return;
   }
   gameplayActive = true;
-  if (pausedBySdk) {
-    log.info('gameplay active, GameplayAPI.start deferred until game_api_resume', { reason });
+  if (pauseReasons.size > 0) {
+    log.info('gameplay active, GameplayAPI.start deferred until the game resumes', { reason, reasons: [...pauseReasons].join(',') });
     return;
   }
   callGameplay('start', reason);
@@ -117,53 +159,75 @@ export function gameplayStop(reason: string): void {
     return;
   }
   gameplayActive = false;
-  if (pausedBySdk) {
-    log.info('gameplay inactive, GameplayAPI.stop already sent on game_api_pause', { reason });
+  if (pauseReasons.size > 0) {
+    log.info('gameplay inactive, GameplayAPI.stop was already sent on pause', { reason });
     return;
   }
   callGameplay('stop', reason);
 }
 
-function runAd(kind: 'interstitial' | 'rewarded', placement: string, clickedAt: number, show: (ysdk: SDK, done: (result: Omit<AdResult, 'ms'>) => void) => void): Promise<AdResult> {
+function runAd(
+  kind: 'interstitial' | 'rewarded',
+  placement: string,
+  clickedAt: number,
+  show: (ysdk: SDK, progress: AdProgress, done: (result: AdProgress) => void) => void,
+): Promise<AdResult> {
   const startedAt = performance.now();
   if (!sdk) {
     log.warn(`${kind} skipped: SDK is not available`, { placement });
     return Promise.resolve({ shown: false, rewarded: false, error: 'no-sdk', ms: 0 });
   }
   const ysdk = sdk;
+  const progress: AdProgress = { shown: false, rewarded: false };
   return new Promise((resolve) => {
     let settled = false;
     const timer = window.setTimeout(() => {
-      log.warn(`${kind} got no onClose within ${AD_TIMEOUT_MS}ms, giving up`, { placement });
-      done({ shown: false, rewarded: false, error: 'timeout' });
+      log.warn(`${kind} got no onClose within ${AD_TIMEOUT_MS}ms, finishing with what was received`, { placement, ...progress });
+      done({ ...progress, error: 'timeout' });
     }, AD_TIMEOUT_MS);
-    const done = (result: Omit<AdResult, 'ms'>) => {
+    let graceTimer = 0;
+    const done = (result: AdProgress) => {
       if (settled) return;
       settled = true;
       window.clearTimeout(timer);
+      window.clearTimeout(graceTimer);
+      onSdkResume = null;
       const ms = since(startedAt);
       log.info(`${kind} finished`, { placement, ...result, ms });
       resolve({ ...result, ms });
     };
+    onSdkResume = () => {
+      if (!progress.shown) return;
+      window.clearTimeout(graceTimer);
+      graceTimer = window.setTimeout(() => {
+        log.warn(`${kind}: game_api_resume came but no onClose within ${AD_RESUME_GRACE_MS}ms, finishing with what was received`, { placement, ...progress });
+        done({ ...progress, error: 'no-onclose' });
+      }, AD_RESUME_GRACE_MS);
+    };
     log.info(`${kind}: click -> SDK call in ${Math.round(startedAt - clickedAt)}ms`, { placement });
     try {
-      show(ysdk, done);
+      show(ysdk, progress, done);
     } catch (error) {
       log.error(`${kind}: SDK call threw synchronously`, { placement, error });
-      done({ shown: false, rewarded: false, error: error instanceof Error ? error.message : String(error) });
+      done({ ...progress, error: error instanceof Error ? error.message : String(error) });
     }
   });
 }
 
+const errorText = (error: unknown) => (error instanceof Error ? error.message : String(error));
+
 export function showInterstitial(placement: string, clickedAt: number): Promise<AdResult> {
-  return runAd('interstitial', placement, clickedAt, (ysdk, done) => {
+  return runAd('interstitial', placement, clickedAt, (ysdk, progress, done) => {
     ysdk.adv.showFullscreenAdv({
       callbacks: {
-        onOpen: () => log.info('interstitial onOpen', { placement }),
+        onOpen: () => {
+          progress.shown = true;
+          log.info('interstitial onOpen', { placement });
+        },
         onClose: (wasShown) => done({ shown: wasShown, rewarded: false }),
         onError: (error) => {
-          log.error('interstitial onError', { placement, error });
-          done({ shown: false, rewarded: false, error: error instanceof Error ? error.message : String(error) });
+          log.warn('interstitial onError, game continues', { placement, error });
+          done({ ...progress, error: errorText(error) });
         },
         onOffline: () => log.warn('interstitial onOffline', { placement }),
       },
@@ -172,23 +236,21 @@ export function showInterstitial(placement: string, clickedAt: number): Promise<
 }
 
 export function showRewarded(placement: string, clickedAt: number): Promise<AdResult> {
-  return runAd('rewarded', placement, clickedAt, (ysdk, done) => {
-    let opened = false;
-    let rewarded = false;
+  return runAd('rewarded', placement, clickedAt, (ysdk, progress, done) => {
     ysdk.adv.showRewardedVideo({
       callbacks: {
         onOpen: () => {
-          opened = true;
+          progress.shown = true;
           log.info('rewarded onOpen', { placement });
         },
         onRewarded: () => {
-          rewarded = true;
+          progress.rewarded = true;
           log.info('rewarded onRewarded', { placement });
         },
-        onClose: () => done({ shown: opened, rewarded }),
+        onClose: () => done({ ...progress }),
         onError: (error) => {
-          log.error('rewarded onError', { placement, error });
-          done({ shown: false, rewarded: false, error: error instanceof Error ? error.message : String(error) });
+          log.warn(progress.rewarded ? 'rewarded onError after onRewarded, reward kept' : 'rewarded onError, no reward', { placement, error });
+          done({ ...progress, error: errorText(error) });
         },
       },
     });

@@ -99,7 +99,7 @@ function formatValue(value: unknown): string {
 }
 
 function format(level: LogLevel, module: string, message: string, ctx?: LogContext): string {
-  const pairs = ctx ? Object.entries(ctx).map(([key, value]) => `${key}=${formatValue(value)}`) : [];
+  const pairs = ctx ? Object.entries(ctx).filter(([, value]) => value !== undefined).map(([key, value]) => `${key}=${formatValue(value)}`) : [];
   return `${clock()} ${level.toUpperCase().padEnd(5)} [${module}] ${message}${pairs.length ? ` ${pairs.join(' ')}` : ''}`;
 }
 

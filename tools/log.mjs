@@ -80,6 +80,7 @@ const lineFormat = winston.format.printf((info) => {
   const errors = [];
   const pairs = [];
   for (const [key, value] of Object.entries(ctx)) {
+    if (value === undefined) continue;
     if (value instanceof Error) {
       pairs.push(`${key}=${value.name}`);
       errors.push(`  ${key}: ${formatError(value)}`);

@@ -132,6 +132,9 @@ export function createGameConfig(gameDir: string): UserConfig {
         '@yg/sdk': join(ROOT, 'packages', 'sdk', 'src'),
       },
     },
+    optimizeDeps: {
+      include: ['phaser'],
+    },
     server: {
       host: 'localhost',
       port: yg.devPort,
