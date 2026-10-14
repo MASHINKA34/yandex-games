@@ -1,0 +1,12 @@
+node_modules/
+dist/
+playwright-report/
+test-results/
+*.zip
+.vite/
+.cache/
+CLAUDE.md
+.claude/
+reports/
+games/*/design/*.md
+games/*/locales/_glossary.md

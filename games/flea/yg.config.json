@@ -1,0 +1,9 @@
+{
+  "appId": null,
+  "title": { "ru": "Барахолка: Торг уместен", "en": "Flea Market: Haggle" },
+  "version": "0.1.0",
+  "orientation": "portrait",
+  "baseWidth": 270,
+  "baseHeight": 480,
+  "devPort": 5174
+}

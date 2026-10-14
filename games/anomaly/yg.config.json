@@ -1,0 +1,9 @@
+{
+  "appId": 631192,
+  "title": { "ru": "Аномалия: Ночная смена", "en": "Anomaly: Night Shift" },
+  "version": "0.1.0",
+  "orientation": "portrait",
+  "baseWidth": 270,
+  "baseHeight": 480,
+  "devPort": 5173
+}
