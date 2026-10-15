@@ -3,6 +3,7 @@ import winston from 'winston';
 const LEVELS = { error: 0, warn: 1, info: 2, debug: 3 };
 const MAX_VALUE = 2048;
 const MAX_CAUSE_DEPTH = 5;
+const ANSI_CODES = new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*m`, 'g');
 
 const pad = (n, width = 2) => String(n).padStart(width, '0');
 
@@ -90,7 +91,7 @@ const lineFormat = winston.format.printf((info) => {
   }
   const tail = pairs.length ? ` ${pairs.join(' ')}` : '';
   const errorBlock = errors.length ? `\n${errors.join('\n')}` : '';
-  return `${clock()} ${info.level.toUpperCase().padEnd(5)} [${info.module}] ${info.message}${tail}${errorBlock}`;
+  return `${clock()} ${info.level.toUpperCase().padEnd(5)} [${info.module}] ${info.message}${tail}${errorBlock}`.replace(ANSI_CODES, '');
 });
 
 const envLevel = process.env.LOG_LEVEL?.toLowerCase();

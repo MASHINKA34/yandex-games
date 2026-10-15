@@ -13,6 +13,7 @@ type PauseReason = 'sdk' | 'blur';
 type AdProgress = Omit<AdResult, 'ms'>;
 
 const log = createLogger('sdk');
+const INIT_TIMEOUT_MS = 10_000;
 const AD_TIMEOUT_MS = 60_000;
 const AD_RESUME_GRACE_MS = 1_500;
 
@@ -27,16 +28,32 @@ let onSdkResume: (() => void) | null = null;
 
 export async function initSdk(): Promise<boolean> {
   if (typeof YaGames === 'undefined') {
-    log.error('YaGames is not defined: /sdk.js did not load, continuing without SDK');
+    const inFrame = window.top !== window;
+    log.error(
+      inFrame
+        ? 'YaGames is not defined: /sdk.js did not load, continuing without SDK'
+        : 'YaGames is not defined: page is opened outside the Yandex Games frame (the SDK loader works only in an iframe) or /sdk.js did not load, continuing without SDK',
+      { inFrame },
+    );
     return false;
   }
   const startedAt = performance.now();
-  log.info('YaGames.init started');
+  log.info('YaGames.init started', { timeoutMs: INIT_TIMEOUT_MS });
+  let timer = 0;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = window.setTimeout(() => reject(new Error(`YaGames.init did not finish in ${INIT_TIMEOUT_MS}ms`)), INIT_TIMEOUT_MS);
+  });
+  const init = YaGames.init();
   try {
-    sdk = await YaGames.init();
+    sdk = await Promise.race([init, timeout]);
   } catch (error) {
     log.error('YaGames.init failed, continuing without SDK', { ms: since(startedAt), error });
+    init
+      .then(() => log.warn('YaGames.init resolved after the timeout, SDK stays off for this session', { ms: since(startedAt) }))
+      .catch((lateError: unknown) => log.debug('YaGames.init rejected after the timeout', { ms: since(startedAt), error: lateError }));
     return false;
+  } finally {
+    window.clearTimeout(timer);
   }
   initDoneAt = performance.now();
   log.info('YaGames.init done', {

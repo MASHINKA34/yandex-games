@@ -17,6 +17,20 @@ export interface YgConfig {
 const log = createLogger('vite');
 const FORBIDDEN_NAMES = ['sdk.js', 'debugcheck.js'];
 const SAFE_NAME = /[^A-Za-z0-9._-]/g;
+const NO_HMR_CLIENT = [
+  "import '/@vite/env';",
+  'const noop = () => {};',
+  'const sheets = new Map();',
+  'export const createHotContext = () => ({ data: {}, accept: noop, acceptExports: noop, dispose: noop, prune: noop, invalidate: noop, on: noop, off: noop, send: noop });',
+  'export const updateStyle = (id, css) => {',
+  '  let style = sheets.get(id);',
+  "  if (!style) { style = document.createElement('style'); style.setAttribute('data-vite-dev-id', id); document.head.appendChild(style); sheets.set(id, style); }",
+  '  style.textContent = css;',
+  '};',
+  'export const removeStyle = (id) => { sheets.get(id)?.remove(); sheets.delete(id); };',
+  'export const injectQuery = (url) => url;',
+  'export class ErrorOverlay {}',
+].join('\n');
 
 function sanitizeFileName(name: string): string {
   return name.replace(/\0/g, '').replace(SAFE_NAME, '_');
@@ -31,11 +45,11 @@ function walk(dir: string): string[] {
 }
 
 function isForbidden(file: string): boolean {
-  const name = file.split(/[\\/]/).pop() ?? '';
+  const name = (file.split(/[\\/]/).pop() ?? '').toLowerCase();
   return FORBIDDEN_NAMES.includes(name) || name.endsWith('.map');
 }
 
-function devSdkPlugin(yg: YgConfig, checker: boolean): Plugin {
+function devSdkPlugin(yg: YgConfig, checker: boolean, noHmr: boolean): Plugin {
   return {
     name: 'yg-dev-sdk',
     apply: 'serve',
@@ -47,6 +61,7 @@ function devSdkPlugin(yg: YgConfig, checker: boolean): Plugin {
         }
         log.info('checker mode: /debugcheck.js injected after /sdk.js', { file: relative(ROOT, CHECKER_PATH) });
       }
+      if (noHmr) log.info('HMR off: /@vite/client replaced with a stub, the page makes no websocket connections');
       server.middlewares.use((req, res, next) => {
         const path = req.url?.split('?')[0];
         if (path === '/sdk.js') {
@@ -54,6 +69,13 @@ function devSdkPlugin(yg: YgConfig, checker: boolean): Plugin {
           res.setHeader('Content-Type', 'text/javascript; charset=utf-8');
           res.setHeader('Cache-Control', 'no-store');
           res.end(mockSdkSource(yg.appId));
+          return;
+        }
+        if (noHmr && path === '/@vite/client') {
+          log.debug('GET /@vite/client -> stub without HMR');
+          res.setHeader('Content-Type', 'text/javascript; charset=utf-8');
+          res.setHeader('Cache-Control', 'no-store');
+          res.end(NO_HMR_CLIENT);
           return;
         }
         if (checker && path === '/debugcheck.js') {
@@ -121,11 +143,12 @@ function releaseGuardPlugin(): Plugin {
 export function createGameConfig(gameDir: string): UserConfig {
   const yg = readYgConfig(gameDir) as YgConfig;
   const checker = process.env.YG_CHECKER === '1';
+  const noHmr = process.env.YG_NO_HMR === '1';
   return {
     root: gameDir,
     base: './',
     publicDir: 'public',
-    plugins: [devSdkPlugin(yg, checker), releaseGuardPlugin()],
+    plugins: [devSdkPlugin(yg, checker, noHmr), releaseGuardPlugin()],
     resolve: {
       alias: {
         '@yg/core': join(ROOT, 'packages', 'core', 'src'),
@@ -139,6 +162,7 @@ export function createGameConfig(gameDir: string): UserConfig {
       host: 'localhost',
       port: yg.devPort,
       strictPort: true,
+      hmr: !noHmr,
     },
     preview: {
       host: 'localhost',

@@ -9,11 +9,13 @@ installProcessHandlers(log);
 
 function parseArgs(argv) {
   const [game, ...rest] = argv;
-  const args = { game, checker: false, port: undefined };
+  const args = { game, checker: false, hmr: true, port: undefined };
   for (let i = 0; i < rest.length; i += 1) {
     const flag = rest[i];
     if (flag === '--checker') {
       args.checker = true;
+    } else if (flag === '--no-hmr') {
+      args.hmr = false;
     } else if (flag === '--port') {
       const value = rest[i + 1];
       args.port = Number(value);
@@ -22,7 +24,7 @@ function parseArgs(argv) {
       }
       i += 1;
     } else {
-      throw new Error(`unknown argument "${flag}", supported: --checker, --port <number>`);
+      throw new Error(`unknown argument "${flag}", supported: --checker, --no-hmr, --port <number>`);
     }
   }
   return args;
@@ -52,6 +54,7 @@ async function main() {
     throw new Error(`--checker requested but ${relative(ROOT, CHECKER_PATH)} does not exist`);
   }
   if (args.checker) process.env.YG_CHECKER = '1';
+  if (!args.hmr) process.env.YG_NO_HMR = '1';
 
   const port = args.port ?? game.config.devPort;
   log.info(`starting dev server for ${game.name}`, {
@@ -59,6 +62,7 @@ async function main() {
     appId: game.config.appId,
     port,
     checker: args.checker,
+    hmr: args.hmr,
     node: process.version,
   });
 
