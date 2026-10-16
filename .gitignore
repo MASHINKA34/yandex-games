@@ -6,6 +6,7 @@ test-results/
 .vite/
 .cache/
 CLAUDE.md
+ASSETS.md
 .claude/
 reports/
 games/*/design/*.md
